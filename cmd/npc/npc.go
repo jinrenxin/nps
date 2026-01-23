@@ -2,15 +2,23 @@ package main
 
 import (
 	"bufio"
-	"ehang.io/nps/lib/crypt"
+	"crypto/md5"
+	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"ehang.io/nps/lib/crypt"
 
 	"ehang.io/nps/client"
 	"ehang.io/nps/lib/common"
@@ -44,6 +52,7 @@ var (
 	ver            = flag.Bool("version", false, "show current version")
 	disconnectTime = flag.Int("disconnect_timeout", 60, "not receiving check packet times, until timeout will disconnect the client")
 	tlsEnable      = flag.Bool("tls_enable", false, "enable tls")
+	authKey        = flag.String("auth", "", "web api auth_key")
 )
 
 func main() {
@@ -244,6 +253,14 @@ func run() {
 			go func() {
 				for {
 					logs.Info("start vkey:" + key)
+					if *authKey != "" {
+						base := buildWebBase(*serverAddr)
+						if msg, ok := queryFirstTunnel(base, *authKey, key); ok {
+							logs.Info(msg)
+						} else {
+							logs.Info("未查询到隧道")
+						}
+					}
 					client.NewRPClient(*serverAddr, key, *connType, *proxyUrl, nil, *disconnectTime).Start()
 					logs.Info("Client closed! It will be reconnected in five seconds")
 					time.Sleep(time.Second * 5)
@@ -551,4 +568,147 @@ func systemPro(flag string, serAddr string, vkey string, tls bool) {
 
 		return
 	}
+}
+
+type webClientListResp struct {
+	Rows []webClient `json:"rows"`
+}
+
+type webClient struct {
+	Id int `json:"Id"`
+}
+
+type webTunnelListResp struct {
+	Rows []webTunnel `json:"rows"`
+}
+
+type webTunnel struct {
+	Id         int        `json:"Id"`
+	Mode       string     `json:"Mode"`
+	Port       int        `json:"Port"`
+	TargetAddr string     `json:"TargetAddr"`
+	Target     *webTarget `json:"Target"`
+}
+
+type webTarget struct {
+	TargetStr string `json:"TargetStr"`
+}
+
+func buildWebBase(server string) string {
+	if strings.HasPrefix(server, "http://") || strings.HasPrefix(server, "https://") {
+		if u, err := url.Parse(server); err == nil {
+			host := u.Hostname()
+			if host == "" {
+				host = u.Host
+			}
+			return "http://" + host + ":8081"
+		}
+	}
+	if u, err := url.Parse("tcp://" + server); err == nil {
+		host := u.Hostname()
+		if host == "" {
+			host = u.Host
+		}
+		return "http://" + host + ":8081"
+	}
+	return "http://" + server + ":8081"
+}
+
+func md5Hex(s string) string {
+	h := md5.New()
+	_, _ = h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func postForm(base, path string, form url.Values) ([]byte, error) {
+	if !strings.HasPrefix(base, "http://") && !strings.HasPrefix(base, "https://") {
+		base = "http://" + base
+	}
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(base, "/")+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("http %d", resp.StatusCode)
+	}
+	return b, nil
+}
+
+func getServerTime(base string) int64 {
+	form := url.Values{}
+	b, err := postForm(base, "/auth/gettime", form)
+	if err != nil {
+		return time.Now().Unix()
+	}
+	var m struct {
+		Time int64 `json:"time"`
+	}
+	if err := json.Unmarshal(b, &m); err != nil || m.Time == 0 {
+		return time.Now().Unix()
+	}
+	return m.Time
+}
+
+func queryFirstTunnel(base string, auth string, vkey string) (string, bool) {
+	ts := getServerTime(base)
+	ak := md5Hex(auth + strconv.FormatInt(ts, 10))
+	clForm := url.Values{
+		"auth_key":  {ak},
+		"timestamp": {strconv.FormatInt(ts, 10)},
+		"search":    {vkey},
+		"offset":    {"0"},
+		"limit":     {"1"},
+	}
+	cb, err := postForm(base, "/client/list", clForm)
+	if err != nil {
+		return "", false
+	}
+	var cl webClientListResp
+	if err := json.Unmarshal(cb, &cl); err != nil || len(cl.Rows) == 0 {
+		return "", false
+	}
+	cid := cl.Rows[0].Id
+
+	ts = getServerTime(base)
+	ak = md5Hex(auth + strconv.FormatInt(ts, 10))
+	tForm := url.Values{
+		"auth_key":  {ak},
+		"timestamp": {strconv.FormatInt(ts, 10)},
+		"client_id": {strconv.Itoa(cid)},
+		"offset":    {"0"},
+		"limit":     {"1"},
+	}
+	tb, err := postForm(base, "/index/gettunnel", tForm)
+	if err != nil {
+		return "", false
+	}
+	var tl webTunnelListResp
+	if err := json.Unmarshal(tb, &tl); err != nil || len(tl.Rows) == 0 {
+		return "", false
+	}
+	t := tl.Rows[0]
+	target := ""
+	if t.Target != nil && t.Target.TargetStr != "" {
+		target = t.Target.TargetStr
+	}
+	if target == "" && t.TargetAddr != "" {
+		target = t.TargetAddr
+	}
+	target = strings.ReplaceAll(target, "\r\n", ",")
+	target = strings.ReplaceAll(target, "\n", ",")
+	if target == "" {
+		target = "-"
+	}
+	return fmt.Sprintf("tunnel %d %s %d %s", t.Id, t.Mode, t.Port, target), true
 }
