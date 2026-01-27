@@ -14,6 +14,10 @@ export function ClearConnectionLogs(arg1) {
   return window['go']['main']['App']['ClearConnectionLogs'](arg1);
 }
 
+export function GetAppVersion() {
+  return window['go']['main']['App']['GetAppVersion']();
+}
+
 export function GetClientStates() {
   return window['go']['main']['App']['GetClientStates']();
 }
@@ -48,10 +52,6 @@ export function SaveGuiSettings(arg1) {
 
 export function SelectDirectory() {
   return window['go']['main']['App']['SelectDirectory']();
-}
-
-export function TestConnection(arg1) {
-  return window['go']['main']['App']['TestConnection'](arg1);
 }
 
 export function ToggleClient(arg1, arg2, arg3, arg4, arg5) {

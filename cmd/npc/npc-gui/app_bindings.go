@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"ehang.io/nps/client"
+	"ehang.io/nps/lib/version"
 	_ "github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
 	wailsRuntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -96,6 +97,8 @@ func (a *App) startup(ctx context.Context) {
 			}
 		}
 	}()
+
+	go a.startTray()
 }
 
 func getLogsPath() string {
@@ -175,13 +178,18 @@ func closeClientLogger(id string) {
 	}
 }
 
-func (a *App) shutdown(ctx context.Context) {}
+func (a *App) shutdown(ctx context.Context) {
+	setQuitting()
+	QuitTray()
+	wailsRuntime.Quit(a.ctx)
+}
 
 // 持久化文件结构（向后兼容旧的仅数组格式）
 type GuiSettings struct {
 	StartupEnabled      bool   `json:"startupEnabled"`
 	RememberClientState bool   `json:"rememberClientState"`
 	LogDir              string `json:"logDir"`
+	ThemeMode           string `json:"themeMode"` // "auto", "light", "dark"
 }
 
 type PersistentStore struct {
@@ -287,13 +295,17 @@ func (a *App) GetGuiSettings() (GuiSettings, error) {
 	store, err := loadPersistentStore()
 	if err != nil {
 		// 返回默认值
-		return GuiSettings{StartupEnabled: true, RememberClientState: true, LogDir: getLogsPath()}, nil
+		return GuiSettings{StartupEnabled: true, RememberClientState: true, LogDir: getLogsPath(), ThemeMode: "auto"}, nil
 	}
 	// 合并默认值
 	s := store.Settings
 	// 如果 LogDir 为空，使用默认路径
 	if s.LogDir == "" {
 		s.LogDir = getLogsPath()
+	}
+	// 如果 ThemeMode 为空，使用默认值 "auto"
+	if s.ThemeMode == "" {
+		s.ThemeMode = "auto"
 	}
 	// 检测是否为首次使用（配置为空），如果是则使用默认值 true
 	// 注意：这里无法区分用户主动设置为 false 还是从未设置过，所以采用保守策略
@@ -400,6 +412,12 @@ func (a *App) SelectDirectory() (string, error) {
 	logs.Info("用户选择的目录: %s", selectedDir)
 	return selectedDir, nil
 }
+
+// GetAppVersion 返回来自 lib/version 的版本号
+func (a *App) GetAppVersion() string {
+	return version.VERSION
+}
+
 func addShortcut(sc ShortClient) {
 	shortcutsMu.Lock()
 	shortcuts = append(shortcuts, sc)
@@ -430,7 +448,7 @@ func (a *App) AddShortcut(arg string) error {
 
 func (a *App) AddShortcutFromBase64(s string) error {
 	if s == "" {
-		return errors.New("empty input")
+		return errors.New("无效的启动命令")
 	}
 	b, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
@@ -438,12 +456,12 @@ func (a *App) AddShortcutFromBase64(s string) error {
 	}
 	payload := string(b)
 	if !strings.HasPrefix(payload, "nps:") {
-		return errors.New("invalid shortcut format")
+		return errors.New("无效的启动命令")
 	}
 	payload = payload[len("nps:"):]
 	parts := strings.Split(payload, "|")
 	if len(parts) != 4 {
-		return errors.New("invalid shortcut payload")
+		return errors.New("无效的启动命令")
 	}
 	tls := false
 	if parts[3] == "true" {
@@ -541,38 +559,6 @@ func (a *App) RemoveShortcut(name, addr, key string) error {
 	shortcuts = append(shortcuts[:idx], shortcuts[idx+1:]...)
 	saveShortcutsLocked()
 	return nil
-}
-
-func (a *App) TestConnection(input string) (bool, error) {
-	if input == "" {
-		return false, errors.New("输入密钥不能为空")
-	}
-	s := input
-	// use environment NPC_SERVER_ADDR if set, fallback to localhost
-	server := os.Getenv("NPC_SERVER_ADDR")
-	if server == "" {
-		server = "127.0.0.1:8024"
-	}
-
-	// Check if shortcut already exists
-	shortcutsMu.Lock()
-	for _, existing := range shortcuts {
-		if existing.Addr == server && existing.Key == s {
-			shortcutsMu.Unlock()
-			return false, errors.New("this command has already been added")
-		}
-	}
-	shortcutsMu.Unlock()
-
-	// persist a shortcut for this local connection
-	name := "local-" + time.Now().Format("20060102150405")
-	sc := ShortClient{Name: name, Addr: server, Key: s, TLS: false}
-	addShortcut(sc)
-
-	// start npc client in goroutine, not as external process
-	id := server + "|" + s
-	go startNpcClient(id, server, s, false)
-	return true, nil
 }
 
 func (a *App) ToggleClient(name, addr, key string, tls bool, runningState bool) error {

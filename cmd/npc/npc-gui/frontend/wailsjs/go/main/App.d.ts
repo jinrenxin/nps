@@ -8,6 +8,8 @@ export function AddShortcutFromBase64(arg1:string):Promise<void>;
 
 export function ClearConnectionLogs(arg1:string):Promise<void>;
 
+export function GetAppVersion():Promise<string>;
+
 export function GetClientStates():Promise<Record<string, string>>;
 
 export function GetConnectionLogs(arg1:string):Promise<Array<main.ConnectionLog>>;
@@ -25,7 +27,5 @@ export function SaveClientStates(arg1:Record<string, string>):Promise<void>;
 export function SaveGuiSettings(arg1:main.GuiSettings):Promise<void>;
 
 export function SelectDirectory():Promise<string>;
-
-export function TestConnection(arg1:string):Promise<boolean>;
 
 export function ToggleClient(arg1:string,arg2:string,arg3:string,arg4:boolean,arg5:boolean):Promise<void>;

@@ -34,10 +34,11 @@
               v-model="commandInput"
               type="text"
               class="command-input"
-              placeholder="输入秘钥或粘贴快捷命令的 Base64 文本"
+              placeholder="输入快捷启动命令"
               @keyup.enter="addConnection"
             />
             <button class="btn btn-primary" @click="addConnection">连接</button>
+            <button class="btn btn-secondary" @click="showManualAddDialog">手工添加</button>
           </div>
         </div>
 
@@ -123,9 +124,22 @@
 
       <div v-else-if="activeView === 'settings'" class="view settings-view">
         <div class="settings-container">
-          <h3 style="margin-bottom:16px">设置</h3>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <h3 style="margin:0">设置</h3>
+            <div style="color:var(--text-secondary)">版本: {{ appVersion || '未知' }}</div>
+          </div>
+
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-            <label style="flex:1;color:#a8b5c8">开机启动</label>
+            <label style="flex:1;color:var(--text-secondary)">主题</label>
+            <select v-model="themeMode" class="theme-select">
+              <option value="auto">跟随系统</option>
+              <option value="light">亮色</option>
+              <option value="dark">暗色</option>
+            </select>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <label style="flex:1;color:var(--text-secondary)">开机启动</label>
             <label class="toggle-switch">
               <input type="checkbox" v-model="startupEnabled" />
               <span class="toggle-slider"></span>
@@ -133,7 +147,7 @@
           </div>
 
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-            <label style="flex:1;color:#a8b5c8">记住客户端状态</label>
+            <label style="flex:1;color:var(--text-secondary)">记住客户端状态</label>
             <label class="toggle-switch">
               <input type="checkbox" v-model="rememberClientState" />
               <span class="toggle-slider"></span>
@@ -141,9 +155,9 @@
           </div>
 
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
-            <label style="flex:1;color:#a8b5c8">日志目录</label>
+            <label style="flex:1;color:var(--text-secondary)">日志目录</label>
             <div style="display:flex;gap:8px;align-items:center">
-              <input v-model="logDir" type="text" style="padding:8px;border-radius:6px;border:1px solid #2d3e54;background:#1a2332;color:#e8eef7;min-width:320px" readonly />
+              <input v-model="logDir" type="text" style="padding:8px;border-radius:6px;border:1px solid var(--border-color);background:var(--bg-primary);color:var(--text-primary);min-width:320px" readonly />
               <button class="btn btn-secondary" @click="selectLogDirectory" style="white-space:nowrap">浏览...</button>
             </div>
           </div>
@@ -157,6 +171,60 @@
 
       <div v-if="message" :class="['message', message.type]">
         {{ message.text }}
+      </div>
+
+      <!-- 手工添加客户端对话框 -->
+      <div v-if="showManualDialog" class="modal-overlay" @click.self="closeManualAddDialog">
+        <div class="modal-dialog">
+          <div class="modal-header">
+            <h3>手工添加客户端</h3>
+            <button class="btn-close" @click="closeManualAddDialog">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>名称 </label>
+              <input v-model="manualForm.name" type="text" class="form-input" placeholder="例如: test" />
+            </div>
+            <div class="form-group">
+              <label>连接地址 <span class="required">*</span></label>
+              <input v-model="manualForm.addr" type="text" class="form-input" placeholder="例如: 127.0.0.1:8024" />
+            </div>
+            <div class="form-group">
+              <label>密钥 <span class="required">*</span></label>
+              <input v-model="manualForm.key" type="text" class="form-input" placeholder="例如: 6237ed8d52" />
+            </div>
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="manualForm.tls" />
+                <span>启用 TLS</span>
+              </label>
+            </div>
+            <div v-if="manualFormError" class="form-error">
+              {{ manualFormError }}
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="closeManualAddDialog">取消</button>
+            <button class="btn btn-primary" @click="submitManualAdd">确定</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 确认对话框 -->
+      <div v-if="confirmState.show" class="modal-overlay" @click.self="confirmCancel">
+        <div class="modal-dialog" style="max-width:360px">
+          <div class="modal-header">
+            <h3>确认</h3>
+            <button class="btn-close" @click="confirmCancel">✕</button>
+          </div>
+          <div class="modal-body">
+            <div style="white-space:pre-wrap">{{ confirmState.text }}</div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="confirmCancel">取消</button>
+            <button class="btn btn-primary" @click="confirmOk">确定</button>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -187,9 +255,65 @@ export default {
     const startupEnabled = ref(true)
     const rememberClientState = ref(true)
     const logDir = ref('')
+    const themeMode = ref('auto') // 'auto', 'light', 'dark'
+    const appVersion = ref('')
+
+    // Manual add dialog
+    const showManualDialog = ref(false)
+    const manualForm = ref({
+      name: '',
+      addr: '',
+      key: '',
+      tls: false
+    })
+    const manualFormError = ref('')
+
+    // Theme
+    const isDarkTheme = ref(true)
+
+    const confirmState = ref({
+      show: false,
+      text: '',
+      resolve: null
+    })
 
     const SETTINGS_KEY = 'npc_settings'
     const CLIENT_STATES_KEY = 'npc_client_states'
+
+    // 检测系统主题
+    const detectSystemTheme = () => {
+      if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        return 'dark'
+      }
+      return 'light'
+    }
+
+    // 应用主题（auto 时交给 CSS 的 prefers-color-scheme 处理）
+    const applyTheme = (theme) => {
+      if (theme === 'auto') {
+        document.documentElement.removeAttribute('data-theme')
+        if (window.matchMedia) {
+          isDarkTheme.value = window.matchMedia('(prefers-color-scheme: dark)').matches
+        }
+        return
+      }
+      isDarkTheme.value = theme === 'dark'
+      document.documentElement.setAttribute('data-theme', theme)
+    }
+
+    // 根据主题模式应用主题
+    const applyThemeMode = (mode) => {
+      if (mode === 'auto') {
+        applyTheme('auto')
+      } else {
+        applyTheme(mode)
+      }
+    }
+
+    // 初始化主题
+    const initTheme = () => {
+      applyThemeMode(themeMode.value)
+    }
 
     const detectDefaultLogDir = async () => {
       try {
@@ -219,6 +343,18 @@ export default {
       return ''
     }
 
+    const loadAppVersion = async () => {
+      try {
+        if (typeof GetAppVersion === 'function') {
+          appVersion.value = await GetAppVersion()
+        } else {
+          appVersion.value = ''
+        }
+      } catch (e) {
+        console.warn('GetAppVersion failed', e)
+      }
+    }
+
     const loadSettings = async () => {
       try {
         if (typeof GetGuiSettings === 'function') {
@@ -226,6 +362,7 @@ export default {
           startupEnabled.value = typeof s.startupEnabled === 'boolean' ? s.startupEnabled : true
           rememberClientState.value = typeof s.rememberClientState === 'boolean' ? s.rememberClientState : true
           logDir.value = typeof s.logDir === 'string' && s.logDir ? s.logDir : await detectDefaultLogDir()
+          themeMode.value = typeof s.themeMode === 'string' && ['auto', 'light', 'dark'].includes(s.themeMode) ? s.themeMode : 'auto'
           return
         }
       } catch (e) {
@@ -240,16 +377,19 @@ export default {
           startupEnabled.value = typeof s.startupEnabled === 'boolean' ? s.startupEnabled : true
           rememberClientState.value = typeof s.rememberClientState === 'boolean' ? s.rememberClientState : true
           logDir.value = typeof s.logDir === 'string' && s.logDir ? s.logDir : await detectDefaultLogDir()
+          themeMode.value = typeof s.themeMode === 'string' && ['auto', 'light', 'dark'].includes(s.themeMode) ? s.themeMode : 'auto'
         } else {
           // defaults
           startupEnabled.value = true
           rememberClientState.value = true
           logDir.value = await detectDefaultLogDir()
+          themeMode.value = 'auto'
         }
       } catch (e) {
         startupEnabled.value = true
         rememberClientState.value = true
         logDir.value = await detectDefaultLogDir()
+        themeMode.value = 'auto'
       }
     }
 
@@ -258,12 +398,18 @@ export default {
       startupEnabled.value = true
       rememberClientState.value = true
       logDir.value = await detectDefaultLogDir()
+      themeMode.value = 'auto'
       showMessage('已重置为默认值', 'success')
     }
 
     const saveSettings = async () => {
       try {
-        const s = { startupEnabled: !!startupEnabled.value, rememberClientState: !!rememberClientState.value, logDir: logDir.value }
+        const s = {
+          startupEnabled: !!startupEnabled.value,
+          rememberClientState: !!rememberClientState.value,
+          logDir: logDir.value,
+          themeMode: themeMode.value
+        }
 
         // 优先使用后端绑定保存
         if (typeof SaveGuiSettings === 'function') {
@@ -322,10 +468,10 @@ export default {
 
     // 从直接导入获取 Wails API（使用 let 以便在浏览器中可替换为 mock）
     let GetShortcuts = AppAPI.GetShortcuts
+    let AddShortcut = AppAPI.AddShortcut
     let AddShortcutFromBase64 = AppAPI.AddShortcutFromBase64
     let RemoveShortcut = AppAPI.RemoveShortcut
     let ToggleClient = AppAPI.ToggleClient
-    let TestConnection = AppAPI.TestConnection
     let GetConnectionLogs = AppAPI.GetConnectionLogs
     let ClearConnectionLogs = AppAPI.ClearConnectionLogs
 
@@ -337,6 +483,7 @@ export default {
     let SaveClientStates = AppAPI.SaveClientStates
     let SelectDirectory = AppAPI.SelectDirectory
     let GetDefaultLogDir = AppAPI.GetDefaultLogDir
+    let GetAppVersion = AppAPI.GetAppVersion
 
     if (!AppAPI || typeof AppAPI.GetShortcuts !== 'function') {
       console.warn('Wails App API not available — using mock implementations for browser debugging')
@@ -344,6 +491,10 @@ export default {
         return [
           { name: 'MyServer', addr: '127.0.0.1:8024', key: 'alefa114df', tls: false, running: false },
         ]
+      }
+      AddShortcut = async (jsonStr) => {
+        console.log('mock AddShortcut', jsonStr)
+        return
       }
       AddShortcutFromBase64 = async (b64) => {
         console.log('mock AddShortcutFromBase64', b64)
@@ -357,10 +508,7 @@ export default {
         console.log('mock ToggleClient', name, newState)
         return
       }
-      TestConnection = async (input) => {
-        console.log('mock TestConnection', input)
-        return
-      }
+
       GetConnectionLogs = async (clientId) => {
         console.log('mock GetConnectionLogs', clientId)
         return [
@@ -378,6 +526,7 @@ export default {
       SaveClientStates = async (m) => { console.log('mock SaveClientStates', m); return }
       SelectDirectory = async () => { console.log('mock SelectDirectory'); return '/mock/selected/path' }
       GetDefaultLogDir = async () => { console.log('mock GetDefaultLogDir'); return 'C:\\Users\\User\\AppData\\Roaming\\npc\\logs' }
+      GetAppVersion = async () => { console.log('mock GetAppVersion'); return 'dev' }
     }
 
     const initWails = async () => {
@@ -503,7 +652,10 @@ export default {
 
     const addConnection = async () => {
       const input = commandInput.value.trim()
-      if (!input) return
+      if (!input) {
+        showMessage('请输入快捷启动命令', 'error')
+        return
+      }
 
       try {
         // Try to parse as Base64 first
@@ -511,7 +663,8 @@ export default {
           await AddShortcutFromBase64(input)
         } else {
           // Try direct key connection
-          await TestConnection(input)
+          showMessage('快捷启动命令格式错误', 'error')
+          return
         }
 
         commandInput.value = ''
@@ -524,8 +677,72 @@ export default {
       }
     }
 
+    const showManualAddDialog = () => {
+      manualForm.value = {
+        name: '',
+        addr: '',
+        key: '',
+        tls: false
+      }
+      manualFormError.value = ''
+      showManualDialog.value = true
+    }
+
+    const closeManualAddDialog = () => {
+      showManualDialog.value = false
+      manualFormError.value = ''
+    }
+
+    const submitManualAdd = async () => {
+      // 清除之前的错误
+      manualFormError.value = ''
+
+      // 验证必填字段
+      const { name, addr, key, tls } = manualForm.value
+
+      if (!addr || !addr.trim()) {
+        manualFormError.value = '请输入连接地址'
+        return
+      }
+
+      if (!key || !key.trim()) {
+        manualFormError.value = '请输入密钥'
+        return
+      }
+
+      // 检查是否已存在相同的客户端
+      const clientId = `${addr.trim()}|${key.trim()}`
+      const existingClient = clients.value.find(c => `${c.addr}|${c.key}` === clientId)
+      if (existingClient) {
+        manualFormError.value = '该客户端已存在，不能重复添加'
+        return
+      }
+
+      try {
+        // 构造 ShortClient 对象
+        const shortClient = {
+          name: name.trim(),
+          addr: addr.trim(),
+          key: key.trim(),
+          tls: tls
+        }
+
+        // 调用 AddShortcut API，传递 JSON 字符串
+        await AddShortcut(JSON.stringify(shortClient))
+
+        closeManualAddDialog()
+        await loadClients()
+        showMessage('客户端已添加', 'success')
+      } catch (error) {
+        console.error('Manual add error:', error)
+        const errMsg = extractErrorMessage(error)
+        manualFormError.value = `添加失败: ${errMsg}`
+      }
+    }
+
     const removeClient = async (client) => {
-      if (!confirm(`确定要删除 "${client.name}" 吗？`)) return
+      const confirmed = await confirmDialog(`确定要删除 "${client.name}" 吗？`)
+      if (!confirmed) return
 
       try {
         await RemoveShortcut(client.name, client.addr, client.key)
@@ -713,7 +930,8 @@ export default {
     })
 
     const clearLogs = async () => {
-      if (!confirm('确定要清空日志吗？')) return
+      const confirmed = await confirmDialog('确定要清空日志吗？')
+      if (!confirmed) return
       try {
         if (selectedClientId.value) {
           await ClearConnectionLogs(selectedClientId.value)
@@ -731,6 +949,22 @@ export default {
         showMessage('清空日志失败', 'error')
       }
     }
+
+    const confirmDialog = (text) => {
+      return new Promise((resolve) => {
+        confirmState.value = { show: true, text, resolve }
+      })
+    }
+
+    const closeConfirmDialog = (confirmed) => {
+      if (confirmState.value.resolve) {
+        confirmState.value.resolve(confirmed)
+      }
+      confirmState.value = { show: false, text: '', resolve: null }
+    }
+
+    const confirmOk = () => closeConfirmDialog(true)
+    const confirmCancel = () => closeConfirmDialog(false)
 
     // 检查是否在底部
     const isAtBottom = () => {
@@ -784,7 +1018,7 @@ export default {
         clearInterval(logRefreshInterval)
         logRefreshInterval = null
       }
-      
+
       if (newView === 'logs') {
         loadLogs()
         // 设置日志刷新间隔为 3 秒，减少频率避免页面频繁闪烁
@@ -794,11 +1028,38 @@ export default {
       }
     })
 
-    onMounted(() => {
-      // 先加载本地设置，再初始化 Wails
-      loadSettings()
+    // 监听主题模式变化
+    watch(themeMode, (newMode) => {
+      applyThemeMode(newMode)
+    })
+
+    onMounted(async () => {
+      // 先加载本地设置
+      await loadSettings()
+
+      // 加载设置后再初始化主题
+      initTheme()
+
+      // 监听系统主题变化（仅在 auto 模式下生效）
+      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+      const handleThemeChange = (e) => {
+        if (themeMode.value === 'auto') {
+          isDarkTheme.value = e.matches
+          document.documentElement.removeAttribute('data-theme')
+        }
+      }
+      if (mediaQuery.addEventListener) {
+        mediaQuery.addEventListener('change', handleThemeChange)
+      } else if (mediaQuery.addListener) {
+        mediaQuery.addListener(handleThemeChange)
+      }
+
+      // 初始化 Wails
       initWails()
-      
+
+      // 加载版本号（如果后端已绑定）
+      await loadAppVersion()
+
       // 每 2 秒自动刷新客户端状态，保持与服务器同步
       const refreshInterval = setInterval(() => {
         loadClients()
@@ -811,12 +1072,17 @@ export default {
           loadLogs()
         }, 3000)
       }
-      
+
       // Cleanup interval on unmount
       return () => {
         clearInterval(refreshInterval)
         if (logRefreshInterval) {
           clearInterval(logRefreshInterval)
+        }
+        if (mediaQuery.removeEventListener) {
+          mediaQuery.removeEventListener('change', handleThemeChange)
+        } else if (mediaQuery.removeListener) {
+          mediaQuery.removeListener(handleThemeChange)
         }
       }
     })
@@ -835,10 +1101,22 @@ export default {
       startupEnabled,
       rememberClientState,
       logDir,
+      themeMode,
+      appVersion,
       loadSettings,
       resetSettings,
       saveSettings,
       selectLogDirectory,
+      // manual add
+      showManualDialog,
+      manualForm,
+      manualFormError,
+      showManualAddDialog,
+      closeManualAddDialog,
+      submitManualAdd,
+      confirmState,
+      confirmOk,
+      confirmCancel,
       addConnection,
       removeClient,
       toggleClient,
@@ -854,6 +1132,57 @@ export default {
 </script>
 
 <style>
+/* CSS Variables for Theme */
+:root {
+  /* Dark Theme (Default) */
+  --bg-primary: #1a2332;
+  --bg-secondary: #0f1419;
+  --bg-tertiary: #2d3e54;
+  --text-primary: #e8eef7;
+  --text-secondary: #a8b5c8;
+  --text-tertiary: #5a6d7f;
+  --border-color: #2d3e54;
+  --accent-color: #2b8fe8;
+  --accent-hover: #2079d4;
+  --success-color: #2ecc71;
+  --error-color: #e74c3c;
+  --warning-color: #f39c12;
+}
+
+/* Light Theme (explicit) */
+[data-theme="light"] {
+  --bg-primary: #f5f7fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e4e7eb;
+  --text-primary: #1a202c;
+  --text-secondary: #4a5568;
+  --text-tertiary: #718096;
+  --border-color: #cbd5e0;
+  --accent-color: #3182ce;
+  --accent-hover: #2c5aa0;
+  --success-color: #38a169;
+  --error-color: #e53e3e;
+  --warning-color: #dd6b20;
+}
+
+/* Light Theme (auto via prefers-color-scheme) */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg-primary: #f5f7fa;
+    --bg-secondary: #ffffff;
+    --bg-tertiary: #e4e7eb;
+    --text-primary: #1a202c;
+    --text-secondary: #4a5568;
+    --text-tertiary: #718096;
+    --border-color: #cbd5e0;
+    --accent-color: #3182ce;
+    --accent-hover: #2c5aa0;
+    --success-color: #38a169;
+    --error-color: #e53e3e;
+    --warning-color: #dd6b20;
+  }
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -863,8 +1192,8 @@ export default {
 .container {
   display: flex;
   height: 100vh;
-  background: #1a2332;
-  color: #e8eef7;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell,
     sans-serif;
 }
@@ -872,8 +1201,8 @@ export default {
 /* Sidebar */
 .sidebar {
   width: 180px;
-  background: #0f1419;
-  border-right: 1px solid #2d3e54;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
   padding: 20px 0;
   display: flex;
   flex-direction: column;
@@ -890,7 +1219,7 @@ export default {
   padding: 12px 15px;
   background: transparent;
   border: none;
-  color: #a8b5c8;
+  color: var(--text-secondary);
   cursor: pointer;
   border-radius: 6px;
   font-size: 14px;
@@ -899,12 +1228,12 @@ export default {
 }
 
 .sidebar-btn:hover {
-  background: #2d3e54;
-  color: #e8eef7;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
 }
 
 .sidebar-btn.active {
-  background: #2b8fe8;
+  background: var(--accent-color);
   color: white;
   font-weight: 500;
 }
@@ -944,9 +1273,9 @@ export default {
 .command-input {
   flex: 1;
   padding: 10px 15px;
-  background: #1a2332;
-  border: 1px solid #2d3e54;
-  color: #e8eef7;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
   border-radius: 6px;
   font-size: 14px;
   transition: border-color 0.2s ease;
@@ -954,7 +1283,7 @@ export default {
 
 .command-input:focus {
   outline: none;
-  border-color: #2b8fe8;
+  border-color: var(--accent-color);
   box-shadow: 0 0 0 2px rgba(43, 143, 232, 0.1);
 }
 
@@ -969,12 +1298,12 @@ export default {
 }
 
 .btn-primary {
-  background: #2b8fe8;
+  background: var(--accent-color);
   color: white;
 }
 
 .btn-primary:hover {
-  background: #2079d4;
+  background: var(--accent-hover);
   transform: translateY(-1px);
 }
 
@@ -983,12 +1312,12 @@ export default {
 }
 
 .btn-secondary {
-  background: #2d3e54;
-  color: #e8eef7;
+  background: var(--border-color);
+  color: var(--text-primary);
 }
 
 .btn-secondary:hover {
-  background: #3a4d66;
+  background: var(--bg-tertiary);
   transform: translateY(-1px);
 }
 
@@ -997,7 +1326,7 @@ export default {
 }
 
 .btn-scroll-to-bottom {
-  background: #f39c12;
+  background: var(--warning-color);
   color: white;
 }
 
@@ -1016,12 +1345,12 @@ export default {
   grid-column: 1 / -1;
   padding: 40px 20px;
   text-align: center;
-  color: #a8b5c8;
+  color: var(--text-secondary);
 }
 
 .client-card {
-  background: #1a2332;
-  border: 1px solid #2d3e54;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   overflow: hidden;
   display: flex;
@@ -1030,7 +1359,7 @@ export default {
 }
 
 .client-card:hover {
-  border-color: #2b8fe8;
+  border-color: var(--accent-color);
   box-shadow: 0 4px 12px rgba(43, 143, 232, 0.1);
 }
 
@@ -1039,20 +1368,20 @@ export default {
   justify-content: space-between;
   align-items: center;
   padding: 15px;
-  background: #0f1419;
-  border-bottom: 1px solid #2d3e54;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
 }
 
 .card-title {
   font-size: 16px;
   font-weight: 600;
-  color: #e8eef7;
+  color: var(--text-primary);
 }
 
 .btn-close {
   background: transparent;
   border: none;
-  color: #a8b5c8;
+  color: var(--text-secondary);
   cursor: pointer;
   font-size: 18px;
   padding: 0;
@@ -1087,27 +1416,27 @@ export default {
 }
 
 .info-row.error-message {
-  color: #e74c3c;
+  color: var(--error-color);
   background: rgba(231, 76, 60, 0.1);
   padding: 8px;
   border-radius: 4px;
-  border-left: 3px solid #e74c3c;
+  border-left: 3px solid var(--error-color);
 }
 
 .label {
-  color: #a8b5c8;
+  color: var(--text-secondary);
   min-width: 50px;
 }
 
 .value {
-  color: #e8eef7;
+  color: var(--text-primary);
   word-break: break-all;
   flex: 1;
 }
 
 .value.code {
   font-family: 'Monaco', 'Courier New', monospace;
-  background: #0f1419;
+  background: var(--bg-secondary);
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 12px;
@@ -1115,8 +1444,8 @@ export default {
 
 .card-footer {
   padding: 12px 15px;
-  background: #0f1419;
-  border-top: 1px solid #2d3e54;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
 }
 
 .status-error {
@@ -1124,8 +1453,8 @@ export default {
   padding: 8px;
   border-radius: 4px;
   background: rgba(231, 76, 60, 0.1);
-  border-left: 3px solid #e74c3c;
-  color: #e74c3c;
+  border-left: 3px solid var(--error-color);
+  color: var(--error-color);
   font-size: 12px;
   line-height: 1.4;
 }
@@ -1146,14 +1475,14 @@ export default {
 .toggle-slider {
   width: 44px;
   height: 24px;
-  background: #2d3e54;
+  background: var(--border-color);
   border-radius: 12px;
   position: relative;
   transition: background 0.3s ease;
 }
 
 .toggle-switch input:checked + .toggle-slider {
-  background: #2b8fe8;
+  background: var(--accent-color);
 }
 
 .toggle-slider::after {
@@ -1174,7 +1503,7 @@ export default {
 
 .toggle-label {
   font-size: 13px;
-  color: #a8b5c8;
+  color: var(--text-secondary);
 }
 
 /* Logs View */
@@ -1185,8 +1514,8 @@ export default {
 }
 
 .logs-header {
-  background: #0f1419;
-  border: 1px solid #2d3e54;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 15px;
 }
@@ -1199,16 +1528,16 @@ export default {
 
 .logs-controls label {
   font-size: 14px;
-  color: #a8b5c8;
+  color: var(--text-secondary);
   font-weight: 500;
 }
 
 .client-select {
   padding: 8px 12px;
-  background: #1a2332;
-  border: 1px solid #2d3e54;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 6px;
-  color: #e8eef7;
+  color: var(--text-primary);
   font-size: 13px;
   cursor: pointer;
   flex: 1;
@@ -1216,7 +1545,7 @@ export default {
 }
 
 .client-select:hover {
-  border-color: #3a4d66;
+  border-color: var(--bg-tertiary);
 }
 
 .client-select:focus {
@@ -1227,8 +1556,8 @@ export default {
 
 .logs-container {
   flex: 1;
-  background: #0f1419;
-  border: 1px solid #2d3e54;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 15px;
   display: flex;
@@ -1240,7 +1569,7 @@ export default {
   flex: 1;
   font-family: 'Monaco', 'Courier New', monospace;
   font-size: 13px;
-  color: #a8b5c8;
+  color: var(--text-secondary);
   overflow-y: auto;
   word-break: break-all;
   white-space: pre-wrap;
@@ -1251,7 +1580,7 @@ export default {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #5a6d7f;
+  color: var(--text-tertiary);
   font-style: italic;
 }
 
@@ -1263,13 +1592,13 @@ export default {
 }
 
 .log-timestamp {
-  color: #5a6d7f;
+  color: var(--text-tertiary);
   flex-shrink: 0;
   font-weight: 500;
 }
 
 .log-message {
-  color: #a8b5c8;
+  color: var(--text-secondary);
   flex: 1;
 }
 
@@ -1278,31 +1607,31 @@ export default {
 }
 
 .log-info .log-message {
-  color: #a8b5c8;
+  color: var(--text-secondary);
 }
 
 .log-success .log-timestamp {
-  color: #2ecc71;
+  color: var(--success-color);
 }
 
 .log-success .log-message {
-  color: #2ecc71;
+  color: var(--success-color);
 }
 
 .log-warning .log-timestamp {
-  color: #f39c12;
+  color: var(--warning-color);
 }
 
 .log-warning .log-message {
-  color: #f39c12;
+  color: var(--warning-color);
 }
 
 .log-error .log-timestamp {
-  color: #e74c3c;
+  color: var(--error-color);
 }
 
 .log-error .log-message {
-  color: #e74c3c;
+  color: var(--error-color);
 }
 
 /* Settings View */
@@ -1312,10 +1641,31 @@ export default {
 }
 
 .settings-container {
-  background: #1a2332;
-  border: 1px solid #2d3e54;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 20px;
+}
+
+.theme-select {
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 120px;
+}
+
+.theme-select:hover {
+  border-color: var(--bg-tertiary);
+}
+
+.theme-select:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(43, 143, 232, 0.1);
 }
 
 /* Message */
@@ -1331,17 +1681,17 @@ export default {
 }
 
 .message.success {
-  background: #2ecc71;
+  background: var(--success-color);
   color: white;
 }
 
 .message.error {
-  background: #e74c3c;
+  background: var(--error-color);
   color: white;
 }
 
 .message.info {
-  background: #2b8fe8;
+  background: var(--accent-color);
   color: white;
 }
 
@@ -1356,6 +1706,151 @@ export default {
   }
 }
 
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.modal-dialog {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 15px 20px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.required {
+  color: var(--error-color);
+  margin-left: 2px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(43, 143, 232, 0.1);
+}
+
+.form-input::placeholder {
+  color: var(--text-tertiary);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+}
+
+.checkbox-label span {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.form-error {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: rgba(231, 76, 60, 0.1);
+  border: 1px solid var(--error-color);
+  border-radius: 6px;
+  color: var(--error-color);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
 /* Scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
@@ -1367,11 +1862,11 @@ export default {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2d3e54;
+  background: var(--border-color);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a4d66;
+  background: var(--bg-tertiary);
 }
 </style>
